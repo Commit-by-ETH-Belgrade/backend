@@ -120,3 +120,84 @@ Example Payload:
 - Inspect State: cartesi-backend-1.fly.dev/inspect/
 - Contract Address: 0x61f35052e6d3aB5170cc949193B30Dba81127a95
 - Transactions: CartesiScan Explorer
+
+
+## Explanation of Backend Script Structure
+
+### Database Setup
+``` typescript
+// Instantiate Database
+const db = new Database('/tmp/database.db');
+try {
+  db.run('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, title TEXT, description TEXT, image TEXT, date_event TEXT, start_time TEXT, end_time TEXT, location TEXT, address TEXT, city TEXT, organiser TEXT, amount TEXT, guests TEXT, status TEXT, dummy_1 TEXT)');
+} catch (e) {
+  console.log('ERROR initializing database: ', e)
+}
+console.log('Backend Database initialized');
+```
+
+### Request Handlers
+handleAdvance
+
+```typescript
+const handleAdvance: AdvanceRequestHandler = async (data) => {
+  console.log("Received advance request data " + JSON.stringify(data));
+  const payload = data.payload;
+  try {
+    const eventPayload = JSON.parse(fromHex(payload, 'string')) as EventPayload;
+    console.log(
+        `Managing event ${eventPayload.id}/${eventPayload.title || ''} - ${eventPayload.action}`
+    );
+    if (!eventPayload.action) throw new Error('No action provided');
+    if (eventPayload.action === 'add')
+      db.run('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [eventPayload.id, eventPayload.title, eventPayload.description, eventPayload.image, eventPayload.date_event, eventPayload.start_time, eventPayload.end_time, eventPayload.location, eventPayload.address, eventPayload.city, eventPayload.organiser, eventPayload.amount, eventPayload.guests, eventPayload.status, eventPayload.dummy_1]);
+    if (eventPayload.action === 'delete')
+      db.run('DELETE FROM events WHERE id = ?', [eventPayload.id]);
+
+    const advance_req = await fetch(rollup_server + '/notice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ payload })
+    });
+    console.log("Received notice status ", await advance_req.text())
+    return "accept";
+  } catch (e) {
+    console.log(`Error executing parameters: "${payload}"`);
+    return "reject";
+  }
+};
+```
+- Purpose: Handles advance_state requests from the rollup server.
+  - Functionality:
+      •	Receives a request from the rollup server.
+      •	Parses the payload from hexadecimal to a string.    
+      •	Decodes the payload from hexadecimal to a string and parses it as JSON.
+      •	Checks the action field in the EventPayload:
+      •	If add, inserts a new event into the database.
+      •	If delete, removes the event from the database.
+      •	Sends a notice back to the rollup server with the original payload.
+
+handleInspect
+```typescript
+const handleInspect: InspectRequestHandler = async (data) => {
+  console.log("Received inspect request data " + JSON.stringify(data));
+  try {
+    const listOfEvents = await db.all(`SELECT * FROM events`);
+    const payload = toHex(JSON.stringify(listOfEvents));
+    const inspect_req = await fetch(rollup_server + '/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ payload })
+    });
+    console.log("Received report status " + inspect_req.status);
+    return "accept";
+  } catch (e) {
+    console.log(`Error generating report with binary value "${data.payload}"`);
+    return "reject";
+  }
+};
+```
